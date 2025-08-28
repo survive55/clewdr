@@ -5,7 +5,7 @@ use axum::{
     routing::{delete, get, post},
 };
 use tower::ServiceBuilder;
-use tower_http::{compression::CompressionLayer, cors::CorsLayer};
+use tower_http::{compression::CompressionLayer, cors::CorsLayer, limit::RequestBodyLimitLayer};
 
 use crate::{
     api::*,
@@ -62,8 +62,14 @@ impl RouterBuilder {
             .route_claude_code_oai_endpoints()
             .route_gemini_endpoints()
             .setup_static_serving()
+            .with_request_body_limit()
             .with_tower_trace()
             .with_cors()
+    }
+
+    fn with_request_body_limit(mut self) -> Self {
+        self.inner = self.inner.layer(RequestBodyLimitLayer::new(32 * 1024 * 1024));
+        self
     }
 
     fn route_gemini_endpoints(mut self) -> Self {
