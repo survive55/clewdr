@@ -10,7 +10,3 @@ static/
 /clewdr*.toml
 /cline_docs
 .idea
-.codex
-test
-scripts
-AGENTS.mdmemory_bank/
