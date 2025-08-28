@@ -5,9 +5,8 @@ use axum::{
     routing::{delete, get, post},
 };
 use tower::ServiceBuilder;
-use tower_http::{
-    compression::CompressionLayer, cors::CorsLayer, limit::RequestBodyLimitLayer,
-};
+use axum::extract::DefaultBodyLimit;
+use tower_http::{compression::CompressionLayer, cors::CorsLayer};
 
 use crate::{
     api::*,
@@ -56,8 +55,9 @@ impl RouterBuilder {
 
     /// Creates a new RouterBuilder instance
     /// Sets up routes for API endpoints and static file serving
-    pub fn with_default_setup(self) -> Self {
-        self.route_claude_code_endpoints()
+    pub fn with_default_setup(mut self) -> Self {
+        self = self
+            .route_claude_code_endpoints()
             .route_claude_web_endpoints()
             .route_admin_endpoints()
             .route_claude_web_oai_endpoints()
@@ -65,8 +65,12 @@ impl RouterBuilder {
             .route_gemini_endpoints()
             .setup_static_serving()
             .with_tower_trace()
-            .with_cors()
-            .with_request_body_limit()
+            .with_cors();
+
+        // 核心修復：將 layer 應用於 self.inner 而不是 self
+        self.inner = self.inner.layer(DefaultBodyLimit::max(512 * 1024 * 1024));
+
+        self
     }
 
     fn route_gemini_endpoints(mut self) -> Self {
@@ -229,13 +233,6 @@ impl RouterBuilder {
             ]);
 
         self.inner = self.inner.layer(cors);
-        self
-    }
-
-    fn with_request_body_limit(mut self) -> Self {
-        self.inner = self
-            .inner
-            .layer(RequestBodyLimitLayer::new(32 * 1024 * 1024));
         self
     }
 
