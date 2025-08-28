@@ -1,1 +1,13 @@
 memory_bank/
+target/
+.vscode/
+/config.toml
+log/
+*.log
+cookie.txt
+.DS_Store
+/*.txt
+static/
+/clewdr*.toml
+/cline_docs
+.idea
