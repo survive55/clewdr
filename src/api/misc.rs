@@ -611,8 +611,9 @@ async fn fetch_usage_percent(
     let five = usage
         .get("five_hour")
         .and_then(|o| o.get("utilization"))
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as u32;
+        .and_then(|v| v.as_f64())
+        .map(|v| v.round() as u32)
+        .unwrap_or(0);
     let five_reset = usage
         .get("five_hour")
         .and_then(|o| o.get("resets_at"))
@@ -621,8 +622,9 @@ async fn fetch_usage_percent(
     let seven = usage
         .get("seven_day")
         .and_then(|o| o.get("utilization"))
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as u32;
+        .and_then(|v| v.as_f64())
+        .map(|v| v.round() as u32)
+        .unwrap_or(0);
     let seven_reset = usage
         .get("seven_day")
         .and_then(|o| o.get("resets_at"))
@@ -631,8 +633,8 @@ async fn fetch_usage_percent(
     let seven_opus = usage
         .get("seven_day_opus")
         .and_then(|o| o.get("utilization"))
-        .and_then(|v| v.as_u64())
-        .map(|v| v as u32)
+        .and_then(|v| v.as_f64())
+        .map(|v| v.round() as u32)
         .unwrap_or(0);
     let opus_reset = usage
         .get("seven_day_opus")
