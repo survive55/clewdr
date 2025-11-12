@@ -299,16 +299,17 @@ pub async fn api_get_cookies(
 
     // Check cache if not force refreshing
     if !query.refresh
-        && let Some(cached) = COOKIES_CACHE.get(COOKIE_STATUS_CACHE_KEY) {
-            headers.insert("X-Cache-Status", HeaderValue::from_static("HIT"));
-            headers.insert(
-                "X-Cache-Timestamp",
-                HeaderValue::from_str(&cached.timestamp.to_string())
-                    .unwrap_or_else(|_| HeaderValue::from_static("0")),
-            );
-            info!("Cookie status served from cache");
-            return Ok((headers, Json(cached.data)));
-        }
+        && let Some(cached) = COOKIES_CACHE.get(COOKIE_STATUS_CACHE_KEY)
+    {
+        headers.insert("X-Cache-Status", HeaderValue::from_static("HIT"));
+        headers.insert(
+            "X-Cache-Timestamp",
+            HeaderValue::from_str(&cached.timestamp.to_string())
+                .unwrap_or_else(|_| HeaderValue::from_static("0")),
+        );
+        info!("Cookie status served from cache");
+        return Ok((headers, Json(cached.data)));
+    }
 
     // Cache miss or force refresh - fetch fresh data
     match s.get_status().await {
