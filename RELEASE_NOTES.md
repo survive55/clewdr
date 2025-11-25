@@ -1,10 +1,4 @@
 # Release Notes
-
-## Bug Fixes
-
-- Fix auto-update GitHub release lookup by stripping email from author metadata so the GitHub API URL points to the right repo
-- Correct Android-only function call in `build.rs` so Android builds compile again
-
 ## Maintenance
 
-- Update Cargo and frontend npm/pnpm dependencies to latest compatible versions
+- Add Anthropic `claude-opus-4-5-20251101` and `claude-opus-4-5` models to the supported list
