@@ -1,5 +1,4 @@
-# v0.11.21
+# Release Notes
+## Maintenance
 
-## Bug Fixes
-
-- Fix double slash problem for Claude Web API endpoints
+- Fix opus 4.5 parameter problem
