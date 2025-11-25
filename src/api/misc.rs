@@ -474,7 +474,7 @@ pub async fn api_auth(AuthBearer(t): AuthBearer) -> StatusCode {
     StatusCode::OK
 }
 
-const MODEL_LIST: [&str; 12] = [
+const MODEL_LIST: [&str; 14] = [
     "claude-3-7-sonnet-20250219",
     "claude-3-7-sonnet-20250219-thinking",
     "claude-sonnet-4-20250514",
@@ -486,7 +486,9 @@ const MODEL_LIST: [&str; 12] = [
     "claude-opus-4-1-20250805",
     "claude-opus-4-1-20250805-thinking",
     "claude-opus-4-5-20251101",
+    "claude-opus-4-5-20251101-thinking",
     "claude-opus-4-5",
+    "claude-opus-4-5-thinking",
 ];
 
 /// API endpoint to get the list of available models
