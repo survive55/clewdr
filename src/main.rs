@@ -6,6 +6,7 @@ use clewdr::{
 use colored::Colorize;
 #[cfg(feature = "mimalloc")]
 use mimalloc::MiMalloc;
+use std::io::IsTerminal;
 use tracing::Subscriber;
 use tracing_subscriber::{
     Layer, Registry,
@@ -49,6 +50,11 @@ async fn main() -> Result<(), ClewdrError> {
     {
         _ = enable_ansi_support::enable_ansi_support();
     }
+
+    // detect if stdout is a TTY and disable colors if not
+    let stdout_is_tty = std::io::stdout().is_terminal();
+    colored::control::set_override(stdout_is_tty);
+
     // set up logging time format
     let timer = ChronoLocal::new("%H:%M:%S%.3f".to_string());
     // set up logging
@@ -64,6 +70,7 @@ async fn main() -> Result<(), ClewdrError> {
         fmt::Layer::default()
             .with_writer(std::io::stdout)
             .with_timer(timer.to_owned())
+            .with_ansi(stdout_is_tty)
             .with_filter(env_filter),
     );
     let _guard = if !CLEWDR_CONFIG.load().no_fs {
@@ -77,6 +84,7 @@ async fn main() -> Result<(), ClewdrError> {
             fmt::Layer::default()
                 .with_writer(file_writer)
                 .with_timer(timer)
+                .with_ansi(false) // disable ANSI colors for file logging
                 .with_filter(filter),
         );
         setup_subscriber(subscriber);
