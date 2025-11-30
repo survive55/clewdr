@@ -13,14 +13,16 @@ use crate::{Args, config::ClewdrConfig};
 pub const CONFIG_NAME: &str = "clewdr.toml";
 pub const CLAUDE_ENDPOINT: &str = "https://api.anthropic.com/";
 pub const CLAUDE_CONSOLE_ENDPOINT: &str = "https://console.anthropic.com";
-pub const GEMINI_ENDPOINT: &str = "https://generativelanguage.googleapis.com/";
 pub const CC_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 pub const CC_TOKEN_URL: &str = "https://api.anthropic.com/v1/oauth/token";
 
 pub static CC_REDIRECT_URI: LazyLock<String> = LazyLock::new(|| {
     let console_endpoint = std::env::var("CLAUDE_CONSOLE_ENDPOINT")
         .unwrap_or_else(|_| CLAUDE_CONSOLE_ENDPOINT.to_string());
-    format!("{}/oauth/code/callback", console_endpoint.trim_end_matches('/'))
+    format!(
+        "{}/oauth/code/callback",
+        console_endpoint.trim_end_matches('/')
+    )
 });
 
 pub static ENDPOINT_URL: LazyLock<Url> = LazyLock::new(|| {

@@ -1,4 +1,8 @@
 # Release Notes
 
-## Feature
-- 通过CLAUDE_CONSOLE_ENDPOINT环境变量 可以设置CC_REDIRECT_URI的值 实现oauth的反代设置
+## Unreleased
+
+- Removed database persistence support and related storage APIs; configuration now always saves to `clewdr.toml`.
+- Dropped Gemini AI Studio and Vertex AI routes, providers, and credentials management from the backend.
+- Simplified the frontend by removing Gemini tabs, key/vertex upload flows, and database storage controls.
+- Updated documentation to reflect the Claude-only focus going forward.
