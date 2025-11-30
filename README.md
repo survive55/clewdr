@@ -21,9 +21,10 @@ It keeps resource usage low, serves OpenAI-style endpoints, and ships with a sma
 
 | Service | Endpoint |
 |---------|----------|
-| Claude native | `http://127.0.0.1:8484/v1/messages` |
-| Claude OpenAI compatible | `http://127.0.0.1:8484/v1/chat/completions` |
+| Claude.ai | `http://127.0.0.1:8484/v1/messages` |
+| Claude.ai OpenAI compatible | `http://127.0.0.1:8484/v1/chat/completions` |
 | Claude Code | `http://127.0.0.1:8484/code/v1/messages` |
+| Claude Code OpenAI compatible | `http://127.0.0.1:8484/code/v1/chat/completions` |
 
 Streaming responses work on every endpoint.
 
