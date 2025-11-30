@@ -32,7 +32,10 @@ colored = "3"
 axum = { version = "0.8", features = ["macros"] }
 regex = "1"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["chrono", "env-filter"] }
+tracing-subscriber = { version = "=0.3.19", features = [
+    "chrono",
+    "env-filter",
+] }
 chrono = "0.4"
 futures = "0.3"
 thiserror = "2"
