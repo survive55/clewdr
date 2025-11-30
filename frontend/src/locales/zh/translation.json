@@ -156,7 +156,7 @@
         "skipFirstWarning": "跳过一次警告（小黄）",
         "skipSecondWarning": "跳过二次警告（小黄）",
         "skipRestricted": "跳过受限（大黄）",
-        "skipNonPro": "跳过普号",
+        "skipFree": "跳过普号",
         "skipRateLimit": "跳过冷却",
         "skipNormalPro": "跳过正常Pro（大黄仙人特供）"
       },

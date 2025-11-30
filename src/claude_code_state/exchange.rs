@@ -258,7 +258,7 @@ impl ClaudeCodeState {
 
                 // First, verify the cookie is still valid and check account type
                 // This will return Reason::Null if cookie is invalid,
-                // or Reason::NonPro if account was downgraded
+                // or Reason::Free if account was downgraded
                 let org_uuid = self
                     .get_organization()
                     .await

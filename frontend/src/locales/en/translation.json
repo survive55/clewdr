@@ -156,7 +156,7 @@
         "skipFirstWarning": "Skip First Warning",
         "skipSecondWarning": "Skip Second Warning",
         "skipRestricted": "Skip Restricted",
-        "skipNonPro": "Skip Non-Pro",
+        "skipFree": "Skip Non-Pro",
         "skipRateLimit": "Skip Rate Limit",
         "skipNormalPro": "Skip Normal Pro"
       },

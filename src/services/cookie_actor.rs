@@ -236,7 +236,7 @@ impl CookieActor {
                     return;
                 }
             }
-            Reason::NonPro => {
+            Reason::Free => {
                 find_remove(&cookie);
                 let mut removed = cookie.clone();
                 removed.reset_window_usage();
