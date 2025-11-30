@@ -202,7 +202,7 @@ impl Display for ClewdrConfig {
         if let Some(ref rproxy) = self.rproxy {
             writeln!(f, "Reverse Proxy: {}", rproxy.to_string().blue())?;
         }
-        writeln!(f, "Skip non Pro: {}", enabled(self.skip_non_pro))?;
+        writeln!(f, "Skip Free: {}", enabled(self.skip_non_pro))?;
         writeln!(f, "Skip restricted: {}", enabled(self.skip_restricted))?;
         writeln!(
             f,
