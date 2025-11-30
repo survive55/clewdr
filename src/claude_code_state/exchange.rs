@@ -95,11 +95,13 @@ pub struct ExchangeResult {
 fn setup_client(cc_client_id: String) -> Result<ClaudeOauthClient, ClewdrError> {
     Ok(oauth2::basic::BasicClient::new(ClientId::new(cc_client_id))
         .set_auth_type(oauth2::AuthType::RequestBody)
-        .set_redirect_uri(RedirectUrl::new(CC_REDIRECT_URI.as_str().to_string()).map_err(|_| {
-            ClewdrError::UnexpectedNone {
-                msg: "Invalid redirect URI",
-            }
-        })?)
+        .set_redirect_uri(
+            RedirectUrl::new(CC_REDIRECT_URI.as_str().to_string()).map_err(|_| {
+                ClewdrError::UnexpectedNone {
+                    msg: "Invalid redirect URI",
+                }
+            })?,
+        )
         .set_token_uri(TokenUrl::new(CC_TOKEN_URL.into()).map_err(|_| {
             ClewdrError::UnexpectedNone {
                 msg: "Invalid token URI",
@@ -245,44 +247,41 @@ impl ClaudeCodeState {
             }
             Err(e) => {
                 // Check if this is an invalid_grant error
-                if Self::is_invalid_grant_error(&e) {
-                    tracing::warn!("Refresh token invalid (invalid_grant), attempting to re-authorize with new OAuth2 flow");
-                    // Clear the old token to force re-authorization
-                    self.cookie.as_mut().map(|c| c.token = None);
+                if !Self::is_invalid_grant_error(&e) {
+                    return Err(e.into());
+                }
+                tracing::warn!(
+                    "Refresh token invalid (invalid_grant), attempting to re-authorize with new OAuth2 flow"
+                );
+                // Clear the old token to force re-authorization
+                if let Some(cookie) = self.cookie.as_mut() {
+                    cookie.token = None;
+                }
 
-                    // First, verify the cookie is still valid and check account type
-                    // This will return Reason::Null if cookie is invalid,
-                    // or Reason::NonPro if account was downgraded
-                    match self.get_organization().await {
-                        Ok(org_uuid) => {
-                            // Cookie is valid and account has Pro+ permissions, proceed with re-authorization
-                            match self.exchange_code(&org_uuid).await {
-                                Ok(code_res) => {
-                                    match self.exchange_token(code_res).await {
-                                        Ok(_) => {
-                                            tracing::info!("Successfully re-authorized with new OAuth2 flow");
-                                            Ok(())
-                                        }
-                                        Err(token_err) => {
-                                            tracing::error!("Failed to exchange token during re-authorization: {}", token_err);
-                                            Err(token_err)
-                                        }
-                                    }
-                                }
-                                Err(code_err) => {
-                                    tracing::error!("Failed to exchange code during re-authorization: {}", code_err);
-                                    Err(code_err)
-                                }
-                            }
-                        }
-                        Err(org_err) => {
-                            // Cookie is invalid or account doesn't have Pro+ permissions
-                            tracing::error!("Cannot re-authorize: {}", org_err);
-                            Err(org_err)
-                        }
+                // First, verify the cookie is still valid and check account type
+                // This will return Reason::Null if cookie is invalid,
+                // or Reason::NonPro if account was downgraded
+                let org_uuid = self
+                    .get_organization()
+                    .await
+                    .inspect_err(|e| tracing::error!("Cannot re-authorize: {}", e))?;
+
+                // Cookie is valid and account has Pro+ permissions, proceed with re-authorization
+                let code_res = self.exchange_code(&org_uuid).await.inspect_err(|e| {
+                    tracing::error!("Failed to exchange code during re-authorization: {}", e)
+                })?;
+                match self.exchange_token(code_res).await {
+                    Ok(_) => {
+                        tracing::info!("Successfully re-authorized with new OAuth2 flow");
+                        Ok(())
                     }
-                } else {
-                    Err(e.into())
+                    Err(token_err) => {
+                        tracing::error!(
+                            "Failed to exchange token during re-authorization: {}",
+                            token_err
+                        );
+                        Err(token_err)
+                    }
                 }
             }
         }
@@ -299,13 +298,18 @@ impl ClaudeCodeState {
         match error {
             RequestTokenError::ServerResponse(response) => {
                 // Check if error type is invalid_grant
-                response.error().to_string().to_lowercase().contains("invalid_grant")
+                response
+                    .error()
+                    .to_string()
+                    .to_lowercase()
+                    .contains("invalid_grant")
                     || response
                         .error_description()
                         .map(|desc| {
                             let desc_lower = desc.to_lowercase();
                             desc_lower.contains("refresh token not found")
-                                || desc_lower.contains("refresh token") && desc_lower.contains("invalid")
+                                || desc_lower.contains("refresh token")
+                                    && desc_lower.contains("invalid")
                         })
                         .unwrap_or(false)
             }
