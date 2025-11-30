@@ -50,7 +50,7 @@ const CookieVisualization: React.FC = () => {
       // Cache info is available in response.cacheInfo for debugging
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      setError(translateError(message));
+      setError(message);
       setCookieStatus(emptyCookieStatus);
     } finally {
       setLoading(false);
@@ -71,13 +71,6 @@ const CookieVisualization: React.FC = () => {
     } else {
       setRefreshCounter((prev) => prev + 1);
     }
-  };
-
-  const translateError = (message: string) => {
-    if (message.includes("Database storage is unavailable")) {
-      return t("common.dbUnavailable");
-    }
-    return message;
   };
 
   const getCooldownDisplay = (status: CookieItem) => {
@@ -324,11 +317,11 @@ const CookieVisualization: React.FC = () => {
                     data.error ||
                     t("common.error", { message: response.status })
                 );
-        setError(translateError(errorMessage));
+        setError(errorMessage);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      setError(translateError(message));
+      setError(message);
     } finally {
       setDeletingCookie(null);
     }
