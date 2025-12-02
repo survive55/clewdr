@@ -95,7 +95,7 @@ pub struct ExchangeResult {
 fn setup_client(cc_client_id: String) -> Result<ClaudeOauthClient, ClewdrError> {
     Ok(oauth2::basic::BasicClient::new(ClientId::new(cc_client_id))
         .set_auth_type(oauth2::AuthType::RequestBody)
-        .set_redirect_uri(RedirectUrl::new(CC_REDIRECT_URI.clone()).map_err(|_| {
+        .set_redirect_uri(RedirectUrl::new(CC_REDIRECT_URI.into()).map_err(|_| {
             ClewdrError::UnexpectedNone {
                 msg: "Invalid redirect URI",
             }
