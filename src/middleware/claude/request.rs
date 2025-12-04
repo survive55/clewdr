@@ -245,18 +245,14 @@ where
             };
             match body.system {
                 Some(Value::String(ref text)) => {
-                    if text != PRELUDE_TEXT {
-                        let text_content = ContentBlock::Text {
-                            text: text.to_owned(),
-                        };
-                        body.system = Some(json!([prelude_blk, text_content]));
-                    }
+                    let text_content = ContentBlock::Text {
+                        text: text.to_owned(),
+                    };
+                    body.system = Some(json!([prelude_blk, text_content]));
                 }
                 Some(Value::Array(ref mut a)) => {
-                    if !a.first().is_some_and(|blk| blk == PRELUDE_TEXT) {
-                        a.insert(0, json!(prelude_blk));
-                        body.system = Some(json!(a));
-                    }
+                    a.insert(0, json!(prelude_blk));
+                    body.system = Some(json!(a));
                 }
                 _ => {
                     body.system = Some(json!([prelude_blk]));
