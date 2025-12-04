@@ -252,7 +252,6 @@ where
                 }
                 Some(Value::Array(ref mut a)) => {
                     a.insert(0, json!(prelude_blk));
-                    body.system = Some(json!(a));
                 }
                 _ => {
                     body.system = Some(json!([prelude_blk]));
