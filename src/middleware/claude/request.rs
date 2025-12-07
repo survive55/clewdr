@@ -209,7 +209,7 @@ where
             .and_then(|v| v.to_str().ok())
             .unwrap_or_default()
             .to_lowercase();
-        let is_from_cc = ua.contains("claude-code");
+        let is_from_cc = ua.contains("claude-code") || ua.contains("claude-cli");
         let NormalizeRequest(mut body, format) = NormalizeRequest::from_request(req, &()).await?;
         // Handle thinking mode by modifying the model name
         if (body.model.contains("opus-4-1")
