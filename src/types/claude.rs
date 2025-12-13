@@ -251,8 +251,6 @@ pub struct CacheControlEphemeral {
     pub type_: CacheControlType,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ttl: Option<String>,
-    #[serde(flatten)]
-    pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
@@ -292,9 +290,6 @@ pub struct CustomTool {
     /// Optional tool type marker
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
     pub type_: Option<CustomToolType>,
-    /// Preserve any extra fields for forward-compatibility
-    #[serde(flatten)]
-    pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
@@ -394,8 +389,6 @@ pub struct WebSearchUserLocation {
     pub region: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timezone: Option<String>,
-    #[serde(flatten)]
-    pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
