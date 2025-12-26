@@ -1,6 +1,7 @@
 use std::collections::{HashSet, VecDeque};
 
 use chrono::Utc;
+use colored::Colorize;
 use moka::sync::Cache;
 use ractor::{Actor, ActorProcessingErr, ActorRef, RpcReplyPort};
 use serde::Serialize;
@@ -81,9 +82,9 @@ impl CookieActor {
     fn log(state: &CookieActorState) {
         info!(
             "Valid: {}, Exhausted: {}, Invalid: {}",
-            state.valid.len().to_string().as_str(),
-            state.exhausted.len().to_string().as_str(),
-            state.invalid.len().to_string().as_str(),
+            state.valid.len().to_string().green(),
+            state.exhausted.len().to_string().yellow(),
+            state.invalid.len().to_string().red(),
         );
     }
 
