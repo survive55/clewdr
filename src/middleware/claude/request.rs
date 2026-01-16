@@ -65,9 +65,7 @@ pub struct ClaudeWebContext {
 static TEST_MESSAGE_CLAUDE: LazyLock<Message> = LazyLock::new(|| {
     Message::new_blocks(
         Role::User,
-        vec![ContentBlock::Text {
-            text: "Hi".to_string(),
-        }],
+        vec![ContentBlock::text("Hi")],
     )
 });
 
@@ -92,12 +90,12 @@ fn sanitize_messages(msgs: Vec<Message>) -> Vec<Message> {
                     let mut new_blocks: Vec<ContentBlock> = content
                         .into_iter()
                         .filter_map(|b| match b {
-                            ContentBlock::Text { text } => {
+                            ContentBlock::Text { text, .. } => {
                                 let t = text.trim().to_string();
                                 if t.is_empty() {
                                     None
                                 } else {
-                                    Some(ContentBlock::Text { text: t })
+                                    Some(ContentBlock::text(t))
                                 }
                             }
                             other => Some(other),
@@ -236,18 +234,16 @@ where
         if !is_from_cc {
             // Add a prelude text block to the system messages
             const PRELUDE_TEXT: &str = "You are Claude Code, Anthropic's official CLI for Claude.";
-            let prelude_blk = ContentBlock::Text {
-                text: CLEWDR_CONFIG
+            let prelude_blk = ContentBlock::text(
+                CLEWDR_CONFIG
                     .load()
                     .custom_system
                     .clone()
                     .unwrap_or_else(|| PRELUDE_TEXT.to_string()),
-            };
+            );
             match body.system {
                 Some(Value::String(ref text)) => {
-                    let text_content = ContentBlock::Text {
-                        text: text.to_owned(),
-                    };
+                    let text_content = ContentBlock::text(text.to_owned());
                     body.system = Some(json!([prelude_blk, text_content]));
                 }
                 Some(Value::Array(ref mut a)) => {
