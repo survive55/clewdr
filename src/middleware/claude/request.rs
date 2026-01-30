@@ -1,6 +1,5 @@
 use std::{
     hash::{DefaultHasher, Hash, Hasher},
-    mem,
     sync::LazyLock,
     vec,
 };
@@ -9,6 +8,7 @@ use axum::{
     Json,
     extract::{FromRequest, Request},
 };
+use http::header::USER_AGENT;
 use serde_json::{Value, json};
 
 use crate::{
@@ -17,7 +17,7 @@ use crate::{
     middleware::claude::{ClaudeApiFormat, ClaudeContext},
     types::{
         claude::{
-            ContentBlock, CreateMessageParams, Message, MessageContent, Role, Thinking, Usage,
+            ContentBlock, CreateMessageParams, Message, Role, Thinking, Usage,
         },
         oai::CreateMessageParams as OaiCreateMessageParams,
     },
@@ -64,9 +64,7 @@ pub struct ClaudeWebContext {
 static TEST_MESSAGE_CLAUDE: LazyLock<Message> = LazyLock::new(|| {
     Message::new_blocks(
         Role::User,
-        vec![ContentBlock::Text {
-            text: "Hi".to_string(),
-        }],
+        vec![ContentBlock::text("Hi")],
     )
 });
 
@@ -74,46 +72,6 @@ static TEST_MESSAGE_CLAUDE: LazyLock<Message> = LazyLock::new(|| {
 static TEST_MESSAGE_OAI: LazyLock<Message> = LazyLock::new(|| Message::new_text(Role::User, "Hi"));
 
 struct NormalizeRequest(CreateMessageParams, ClaudeApiFormat);
-
-fn sanitize_messages(msgs: Vec<Message>) -> Vec<Message> {
-    msgs.into_iter()
-        .filter_map(|m| {
-            let role = m.role;
-            let content = match m.content {
-                MessageContent::Text { content } => {
-                    let trimmed = content.trim().to_string();
-                    if role == Role::Assistant && trimmed.is_empty() {
-                        return None;
-                    }
-                    MessageContent::Text { content: trimmed }
-                }
-                MessageContent::Blocks { content } => {
-                    let mut new_blocks: Vec<ContentBlock> = content
-                        .into_iter()
-                        .filter_map(|b| match b {
-                            ContentBlock::Text { text } => {
-                                let t = text.trim().to_string();
-                                if t.is_empty() {
-                                    None
-                                } else {
-                                    Some(ContentBlock::Text { text: t })
-                                }
-                            }
-                            other => Some(other),
-                        })
-                        .collect();
-                    if role == Role::Assistant && new_blocks.is_empty() {
-                        return None;
-                    }
-                    MessageContent::Blocks {
-                        content: mem::take(&mut new_blocks),
-                    }
-                }
-            };
-            Some(Message { role, content })
-        })
-        .collect()
-}
 
 impl<S> FromRequest<S> for NormalizeRequest
 where
@@ -135,8 +93,6 @@ where
             }
             ClaudeApiFormat::Claude => Json::<CreateMessageParams>::from_request(req, &()).await?,
         };
-        // Sanitize messages: trim whitespace and drop whitespace-only assistant turns
-        body.messages = sanitize_messages(body.messages);
         if body.model.ends_with("-thinking") {
             body.model = body.model.trim_end_matches("-thinking").to_string();
             body.thinking.get_or_insert(Thinking::new(4096));
@@ -202,9 +158,18 @@ where
     type Rejection = ClewdrError;
 
     async fn from_request(req: Request, _: &S) -> Result<Self, Self::Rejection> {
+        let ua = req
+            .headers()
+            .get(USER_AGENT)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_lowercase();
+        let is_from_cc = ua.contains("claude-code") || ua.contains("claude-cli");
         let NormalizeRequest(mut body, format) = NormalizeRequest::from_request(req, &()).await?;
         // Handle thinking mode by modifying the model name
-        if (body.model.contains("opus-4-1") || body.model.contains("sonnet-4-5"))
+        if (body.model.contains("opus-4-1")
+            || body.model.contains("sonnet-4-5")
+            || body.model.contains("opus-4-5"))
             && body.temperature.is_some()
         {
             body.top_p = None; // temperature and top_p cannot be used together in Opus-4-1
@@ -222,43 +187,41 @@ where
         // Determine streaming status and API format
         let stream = body.stream.unwrap_or_default();
 
-        // Add a prelude text block to the system messages
-        const PRELUDE_TEXT: &str = "You are Claude Code, Anthropic's official CLI for Claude.";
-        let prelude_blk = || -> ContentBlock {
-            ContentBlock::Text {
-                text: CLEWDR_CONFIG
+        // If the request is not from Claude Code, add a prelude to the system messages
+        if !is_from_cc {
+            // Add a prelude text block to the system messages
+            const PRELUDE_TEXT: &str = "You are Claude Code, Anthropic's official CLI for Claude.";
+            let prelude_blk = ContentBlock::text(
+                CLEWDR_CONFIG
                     .load()
                     .custom_system
                     .clone()
                     .unwrap_or_else(|| PRELUDE_TEXT.to_string()),
-            }
-        };
-        match body.system {
-            Some(Value::String(ref text)) => {
-                if text != PRELUDE_TEXT {
-                    let text_content = ContentBlock::Text {
-                        text: text.to_owned(),
-                    };
-                    body.system = Some(json!([prelude_blk(), text_content]));
+            );
+            match body.system {
+                Some(Value::String(ref text)) => {
+                    let text_content = ContentBlock::text(text.to_owned());
+                    body.system = Some(json!([prelude_blk, text_content]));
                 }
-            }
-            Some(Value::Array(ref mut a)) => {
-                if !a.first().is_some_and(|blk| blk == PRELUDE_TEXT) {
-                    a.insert(0, json!(prelude_blk()));
-                    body.system = Some(json!(a));
+                Some(Value::Array(ref mut a)) => {
+                    a.insert(0, json!(prelude_blk));
                 }
-            }
-            _ => {
-                body.system = Some(json!([prelude_blk()]));
+                _ => {
+                    body.system = Some(json!([prelude_blk]));
+                }
             }
         }
 
         let cache_systems = body
             .system
             .as_ref()
-            .expect("System messages should be present")
+            .ok_or(ClewdrError::BadRequest {
+                msg: "Empty system prompt",
+            })?
             .as_array()
-            .expect("System messages should be an array")
+            .ok_or(ClewdrError::BadRequest {
+                msg: "System prompt is not an array",
+            })?
             .iter()
             .filter(|s| s["cache_control"].as_object().is_some())
             .collect::<Vec<_>>();

@@ -7,6 +7,7 @@ use clewdr::{
 use colored::Colorize;
 #[cfg(feature = "mimalloc")]
 use mimalloc::MiMalloc;
+use std::io::IsTerminal;
 use tracing::Subscriber;
 use tracing_subscriber::{
     Layer, Registry,
@@ -50,18 +51,27 @@ where
 /// Result indicating success or failure of the application execution
 #[tokio::main]
 async fn main() -> Result<(), ClewdrError> {
-    // Ensure aws-lc crypto provider is installed before rustls usage (yup-oauth2 / hyper-rustls)
+    // Ensure a crypto provider is installed before rustls usage (yup-oauth2 / hyper-rustls).
+    #[cfg(target_os = "android")]
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("failed to install ring crypto provider");
+    #[cfg(not(target_os = "android"))]
     rustls::crypto::aws_lc_rs::default_provider()
         .install_default()
         .expect("failed to install aws-lc crypto provider");
 
-    // DB drivers setup is handled by SeaORM (via sqlx features) when compiled with db-*
     #[cfg(feature = "dhat-heap")]
     let _profiler = dhat::Profiler::new_heap();
     #[cfg(windows)]
     {
         _ = enable_ansi_support::enable_ansi_support();
     }
+
+    // detect if stdout is a TTY and disable colors if not
+    let stdout_is_tty = std::io::stdout().is_terminal();
+    colored::control::set_override(stdout_is_tty);
+
     // set up logging time format
     let timer = ChronoLocal::new("%H:%M:%S%.3f".to_string());
     // set up logging
@@ -77,6 +87,7 @@ async fn main() -> Result<(), ClewdrError> {
         fmt::Layer::default()
             .with_writer(std::io::stdout)
             .with_timer(timer.to_owned())
+            .with_ansi(stdout_is_tty)
             .with_filter(env_filter),
     );
     let _guard = if !CLEWDR_CONFIG.load().no_fs && CLEWDR_CONFIG.load().log_to_file {
@@ -90,6 +101,7 @@ async fn main() -> Result<(), ClewdrError> {
             fmt::Layer::default()
                 .with_writer(file_writer)
                 .with_timer(timer)
+                .with_ansi(false) // disable ANSI colors for file logging
                 .with_filter(filter),
         );
         setup_subscriber(subscriber);
@@ -108,11 +120,6 @@ async fn main() -> Result<(), ClewdrError> {
         if let Err(e) = updater.check_for_updates().await {
             warn!("Update check failed: {}", e);
         }
-    }
-
-    if let Err(e) = clewdr::persistence::storage().spawn_bootstrap().await {
-        use tracing::warn;
-        warn!("DB bootstrap skipped or failed: {}", e);
     }
 
     // print info

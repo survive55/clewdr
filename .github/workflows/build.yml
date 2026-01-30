@@ -14,7 +14,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
   APT_PACKAGES: "build-essential cmake perl pkg-config libclang-dev"
-  CHOCOLATEY_PACKAGES: "cmake strawberryperl pkgconfiglite llvm nasm"
+  # pkgconfiglite package is broken upstream (404), skip to keep Windows builds green
+  CHOCOLATEY_PACKAGES: "cmake strawberryperl llvm nasm"
   HOMEBREW_PACKAGES: "llvm"
   BIN_NAME: "clewdr"
 permissions:
@@ -58,9 +59,8 @@ jobs:
     needs: build-frontend
     strategy:
       matrix:
-        os: [linux, musllinux, android, windows, macos]
+        os: [linux, android, windows, macos]
         target_arch: [x86_64, aarch64]
-        variant: [slim, db]
         include:
           # rust target vendor + system + environment
           - os: android
@@ -69,8 +69,6 @@ jobs:
             target_vendor_sys_env: apple-darwin
           - os: linux
             target_vendor_sys_env: unknown-linux-gnu
-          - os: musllinux
-            target_vendor_sys_env: unknown-linux-musl
           - os: windows
             target_vendor_sys_env: pc-windows-msvc
           # runner
@@ -84,9 +82,6 @@ jobs:
             runner: windows-latest
           - os: macos
             runner: macos-latest
-          # musl packages
-          - os: musllinux
-            musl_packages: "clang musl-tools"
         exclude:
           - os: android
             target_arch: x86_64
@@ -113,12 +108,12 @@ jobs:
         if: contains(matrix.runner, 'ubuntu')
         run: |
           sudo apt-get update
-          sudo apt-get install -y ${{ matrix.musl_packages }} ${{ env.APT_PACKAGES }}
+          sudo apt-get install -y ${{ env.APT_PACKAGES }}
 
       - name: Install Chocolatey Packages
         if: matrix.os == 'windows'
         run: |
-          choco install -y ${{ env.CHOCOLATEY_PACKAGES }}
+          choco install -y --ignore-unfound ${{ env.CHOCOLATEY_PACKAGES }}
 
       - name: Install Homebrew Packages
         if: matrix.os == 'macos'
@@ -128,19 +123,12 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ steps.target.outputs.triple }}-${{ matrix.variant }}
+          key: ${{ steps.target.outputs.triple }}
 
-      - name: Prepare variant env (features and suffix)
+      - name: Prepare build env
         shell: bash
         run: |
-          BASE_FEATURES="--no-default-features --features embed-resource,portable"
-          if [ "${{ matrix.variant }}" = "db" ]; then
-            echo "FEATURE_ARGS=${BASE_FEATURES},db-sqlite,db-postgres,db-mysql" >> $GITHUB_ENV
-            echo "ARTIFACT_SUFFIX=-db" >> $GITHUB_ENV
-          else
-            echo "FEATURE_ARGS=${BASE_FEATURES}" >> $GITHUB_ENV
-            echo "ARTIFACT_SUFFIX=" >> $GITHUB_ENV
-          fi
+          echo "FEATURE_ARGS=--no-default-features --features embed-resource,portable" >> $GITHUB_ENV
 
       - name: Download static files
         uses: actions/download-artifact@v4
@@ -148,21 +136,16 @@ jobs:
           name: static-files
           path: static
 
-      - name: Build ${{ steps.target.outputs.triple }} (${{ matrix.variant }})
+      - name: Build ${{ steps.target.outputs.triple }}
         if: ${{ matrix.os != 'android' }}
         shell: bash
         run: |
-          if [ ${{ matrix.os }} == "musllinux" ]; then
-            export CXX=${{ matrix.target_arch }}-linux-gnu-g++
-            export CFLAGS="-D_FORTIFY_SOURCE=0"
-            export CXXFLAGS="-D_FORTIFY_SOURCE=0"
-          fi
           if [ ${{ matrix.os }} == "windows" ]; then
             export RUSTFLAGS="-C target-feature=+crt-static"
           fi
           cargo build --release --target ${{ steps.target.outputs.triple }} $FEATURE_ARGS
 
-      - name: Build with Android NDK (${{ matrix.variant }})
+      - name: Build with Android NDK
         if: ${{ matrix.os == 'android' }}
         run: |
           cargo install cargo-ndk
@@ -171,7 +154,7 @@ jobs:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
           ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
 
-      - name: Move artifact to work dir and zip (${{ matrix.variant }})
+      - name: Move artifact to work dir and zip
         shell: bash
         run: |
           mv target/${{ steps.target.outputs.triple }}/release/${{ env.BIN_NAME }} .
@@ -182,16 +165,16 @@ jobs:
           fi
           cd release-package
           if [ ${{ matrix.os }} == "windows" ]; then
-            7z a -tzip ../${{ env.BIN_NAME }}-${{ matrix.os }}-${{matrix.target_arch}}$ARTIFACT_SUFFIX.zip *
+            7z a -tzip ../${{ env.BIN_NAME }}-${{ matrix.os }}-${{matrix.target_arch}}.zip *
           else
-            zip -r ../${{ env.BIN_NAME }}-${{ matrix.os }}-${{matrix.target_arch}}$ARTIFACT_SUFFIX.zip .
+            zip -r ../${{ env.BIN_NAME }}-${{ matrix.os }}-${{matrix.target_arch}}.zip .
           fi
 
-      - name: Upload artifact (${{ matrix.variant }})
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.BIN_NAME }}-${{ matrix.os }}-${{matrix.target_arch}}${{ matrix.variant == 'db' && '-db' || '' }}
-          path: ${{ env.BIN_NAME }}-${{ matrix.os }}-${{matrix.target_arch}}${{ matrix.variant == 'db' && '-db' || '' }}.zip
+          name: ${{ env.BIN_NAME }}-${{ matrix.os }}-${{matrix.target_arch}}
+          path: ${{ env.BIN_NAME }}-${{ matrix.os }}-${{matrix.target_arch}}.zip
           retention-days: 1
 
   release:

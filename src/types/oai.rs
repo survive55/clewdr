@@ -24,7 +24,7 @@ impl From<CreateMessageParams> for ClaudeCreateMessageParams {
             .into_iter()
             .map(|m| m.content)
             .flat_map(|c| match c {
-                MessageContent::Text { content } => vec![ContentBlock::Text { text: content }],
+                MessageContent::Text { content } => vec![ContentBlock::text(content)],
                 MessageContent::Blocks { content } => content,
             })
             .filter(|b| matches!(b, ContentBlock::Text { .. }))
@@ -37,6 +37,9 @@ impl From<CreateMessageParams> for ClaudeCreateMessageParams {
             system,
             messages,
             model: params.model,
+            container: None,
+            context_management: None,
+            mcp_servers: None,
             stop_sequences: params.stop,
             thinking: params
                 .thinking
@@ -48,6 +51,9 @@ impl From<CreateMessageParams> for ClaudeCreateMessageParams {
             tools: params.tools,
             tool_choice: params.tool_choice,
             metadata: params.metadata,
+            output_config: None,
+            output_format: None,
+            service_tier: None,
             n: params.n,
         }
     }
@@ -100,9 +106,6 @@ pub struct CreateMessageParams {
     /// Request metadata
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Metadata>,
-    /// extra body for Gemini
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub extra_body: Option<serde_json::Value>,
     /// Number of completions to generate
     #[serde(skip_serializing_if = "Option::is_none")]
     pub n: Option<u32>,
@@ -119,7 +122,7 @@ impl CreateMessageParams {
                 MessageContent::Blocks { ref content } => content
                     .iter()
                     .map(|block| match block {
-                        ContentBlock::Text { text } => text,
+                        ContentBlock::Text { text, .. } => text,
                         _ => "",
                     })
                     .collect::<String>(),
@@ -127,27 +130,5 @@ impl CreateMessageParams {
             .collect::<Vec<_>>()
             .join("\n");
         bpe.encode_with_special_tokens(&messages).len() as u32
-    }
-
-    fn optimize_for_gemini(&mut self) {
-        let mut extra_body = json!({});
-        extra_body["google"]["safety_settings"] = json!([
-          { "category": "HARM_CATEGORY_HARASSMENT", "threshold": "OFF" },
-          { "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "OFF" },
-          { "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "OFF" },
-          { "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "OFF" },
-          {
-            "category": "HARM_CATEGORY_CIVIC_INTEGRITY",
-            "threshold": "OFF"
-          }
-        ]);
-        self.extra_body = Some(extra_body);
-        self.frequency_penalty = None;
-    }
-
-    pub fn preprocess_vertex(&mut self) {
-        self.optimize_for_gemini();
-        self.model = self.model.trim_start_matches("google/").to_string();
-        self.model = format!("google/{}", self.model);
     }
 }

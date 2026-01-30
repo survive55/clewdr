@@ -3,10 +3,8 @@ use std::{
     hash::Hash,
     ops::Deref,
     str::FromStr,
-    sync::LazyLock,
 };
 
-use regex;
 use serde::{Deserialize, Serialize};
 use snafu::{GenerateImplicitData, Location};
 use tracing::info;
@@ -55,7 +53,7 @@ impl Serialize for ClewdrCookie {
     where
         S: serde::Serializer,
     {
-        serializer.serialize_str(&self.to_string())
+        serializer.serialize_str(&self.inner)
     }
 }
 
@@ -88,6 +86,8 @@ pub struct CookieStatus {
     #[serde(default)]
     pub weekly_usage: UsageBreakdown,
     #[serde(default)]
+    pub weekly_sonnet_usage: UsageBreakdown,
+    #[serde(default)]
     pub weekly_opus_usage: UsageBreakdown,
     #[serde(default)]
     pub lifetime_usage: UsageBreakdown,
@@ -97,6 +97,8 @@ pub struct CookieStatus {
     pub session_resets_at: Option<i64>,
     #[serde(default)]
     pub weekly_resets_at: Option<i64>,
+    #[serde(default)]
+    pub weekly_sonnet_resets_at: Option<i64>,
     #[serde(default)]
     pub weekly_opus_resets_at: Option<i64>,
 
@@ -110,6 +112,8 @@ pub struct CookieStatus {
     pub session_has_reset: Option<bool>,
     #[serde(default)]
     pub weekly_has_reset: Option<bool>,
+    #[serde(default)]
+    pub weekly_sonnet_has_reset: Option<bool>,
     #[serde(default)]
     pub weekly_opus_has_reset: Option<bool>,
 }
@@ -160,14 +164,17 @@ impl CookieStatus {
 
             session_usage: UsageBreakdown::default(),
             weekly_usage: UsageBreakdown::default(),
+            weekly_sonnet_usage: UsageBreakdown::default(),
             weekly_opus_usage: UsageBreakdown::default(),
             lifetime_usage: UsageBreakdown::default(),
             session_resets_at: None,
             weekly_resets_at: None,
+            weekly_sonnet_resets_at: None,
             weekly_opus_resets_at: None,
             resets_last_checked_at: None,
             session_has_reset: None,
             weekly_has_reset: None,
+            weekly_sonnet_has_reset: None,
             weekly_opus_has_reset: None,
         })
     }
@@ -186,6 +193,7 @@ impl CookieStatus {
                 reset_time: None,
                 session_usage: UsageBreakdown::default(),
                 weekly_usage: UsageBreakdown::default(),
+                weekly_sonnet_usage: UsageBreakdown::default(),
                 weekly_opus_usage: UsageBreakdown::default(),
                 ..self
             };
@@ -209,6 +217,7 @@ impl CookieStatus {
         // Legacy window counters removed; reset session buckets conservatively
         self.session_usage = UsageBreakdown::default();
         self.weekly_usage = UsageBreakdown::default();
+        self.weekly_sonnet_usage = UsageBreakdown::default();
         self.weekly_opus_usage = UsageBreakdown::default();
     }
 
@@ -222,6 +231,10 @@ impl CookieStatus {
 
     pub fn set_weekly_resets_at(&mut self, ts: Option<i64>) {
         self.weekly_resets_at = ts;
+    }
+
+    pub fn set_weekly_sonnet_resets_at(&mut self, ts: Option<i64>) {
+        self.weekly_sonnet_resets_at = ts;
     }
 
     pub fn set_weekly_opus_resets_at(&mut self, ts: Option<i64>) {
@@ -270,6 +283,24 @@ impl CookieStatus {
                     self.weekly_usage.sonnet_input_tokens.saturating_add(input);
                 self.weekly_usage.sonnet_output_tokens = self
                     .weekly_usage
+                    .sonnet_output_tokens
+                    .saturating_add(output);
+
+                // weekly_sonnet bucket (only sonnet contributes)
+                self.weekly_sonnet_usage.total_input_tokens = self
+                    .weekly_sonnet_usage
+                    .total_input_tokens
+                    .saturating_add(input);
+                self.weekly_sonnet_usage.total_output_tokens = self
+                    .weekly_sonnet_usage
+                    .total_output_tokens
+                    .saturating_add(output);
+                self.weekly_sonnet_usage.sonnet_input_tokens = self
+                    .weekly_sonnet_usage
+                    .sonnet_input_tokens
+                    .saturating_add(input);
+                self.weekly_sonnet_usage.sonnet_output_tokens = self
+                    .weekly_sonnet_usage
                     .sonnet_output_tokens
                     .saturating_add(output);
             }
@@ -364,33 +395,27 @@ impl FromStr for ClewdrCookie {
     type Err = ClewdrError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        static RE: LazyLock<regex::Regex> = LazyLock::new(|| {
-            regex::Regex::new(r"(?:sk-ant-sid01-)?([0-9A-Za-z_-]{86}-[0-9A-Za-z_-]{6}AA)").unwrap()
-        });
+        let trimmed = s.trim();
+        let cleaned = trimmed
+            .strip_prefix("sessionKey=")
+            .unwrap_or(trimmed)
+            .trim()
+            .to_string();
 
-        let cleaned = s
-            .chars()
-            .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
-            .collect::<String>();
-
-        if let Some(captures) = RE.captures(&cleaned)
-            && let Some(cookie_match) = captures.get(1)
-        {
-            return Ok(Self {
-                inner: cookie_match.as_str().to_string(),
+        if cleaned.is_empty() {
+            return Err(ClewdrError::ParseCookieError {
+                loc: Location::generate(),
+                msg: "Invalid cookie format",
             });
         }
 
-        Err(ClewdrError::ParseCookieError {
-            loc: Location::generate(),
-            msg: "Invalid cookie format",
-        })
+        Ok(Self { inner: cleaned })
     }
 }
 
 impl Display for ClewdrCookie {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "sessionKey=sk-ant-sid01-{}", self.inner)
+        write!(f, "sessionKey={}", self.inner)
     }
 }
 
@@ -406,8 +431,10 @@ mod tests {
 
     #[test]
     fn test_sk_cookie_from_str() {
-        let cookie = ClewdrCookie::from_str("sk-ant-sid01----------------------------SET_YOUR_COOKIE_HERE----------------------------------------AAAAAAAA").unwrap();
-        assert_eq!(cookie.inner.len(), 95);
+        let cookie = ClewdrCookie::from_str("sk-ant-sidXX----------------------------SET_YOUR_COOKIE_HERE----------------------------------------AAAAAAAA").unwrap();
+        assert!(cookie.inner.starts_with("sk-ant-sid"));
+        assert!(cookie.inner.ends_with("AA"));
+        assert!(cookie.inner.len() > 95);
     }
 
     #[test]

@@ -11,19 +11,17 @@ use tower_http::{compression::CompressionLayer, cors::CorsLayer};
 use crate::{
     api::*,
     middleware::{
-        RequireAdminAuth, RequireBearerAuth, RequireQueryKeyAuth, RequireXApiKeyAuth,
+        RequireAdminAuth, RequireBearerAuth, RequireXApiKeyAuth,
         claude::{add_usage_info, apply_stop_sequences, check_overloaded, to_oai},
     },
-    providers::{claude::ClaudeProviders, gemini::GeminiProviders},
-    services::{cookie_actor::CookieActorHandle, key_actor::KeyActorHandle},
+    providers::claude::ClaudeProviders,
+    services::cookie_actor::CookieActorHandle,
 };
 
 /// RouterBuilder for the application
 pub struct RouterBuilder {
     claude_providers: ClaudeProviders,
     cookie_actor_handle: CookieActorHandle,
-    key_actor_handle: KeyActorHandle,
-    gemini_providers: GeminiProviders,
     inner: Router,
 }
 
@@ -38,17 +36,9 @@ impl RouterBuilder {
             .await
             .expect("Failed to start CookieActor");
         let claude_providers = crate::providers::claude::build_providers(cookie_handle.clone());
-        let key_tx = KeyActorHandle::start()
-            .await
-            .expect("Failed to start KeyActorHandle");
-        let gemini_providers = GeminiProviders::new(key_tx.clone());
-        // Background DB sync (keys/cookies) for multi-instance eventual consistency
-        let _bg = crate::services::sync::spawn(cookie_handle.clone(), key_tx.clone());
         RouterBuilder {
             claude_providers,
             cookie_actor_handle: cookie_handle,
-            key_actor_handle: key_tx,
-            gemini_providers,
             inner: Router::new(),
         }
     }
@@ -62,7 +52,6 @@ impl RouterBuilder {
             .route_admin_endpoints()
             .route_claude_web_oai_endpoints()
             .route_claude_code_oai_endpoints()
-            .route_gemini_endpoints()
             .setup_static_serving()
             .with_tower_trace()
             .with_cors();
@@ -70,24 +59,6 @@ impl RouterBuilder {
         // 核心修復：將 layer 應用於 self.inner 而不是 self
         self.inner = self.inner.layer(DefaultBodyLimit::max(512 * 1024 * 1024));
 
-        self
-    }
-
-    fn route_gemini_endpoints(mut self) -> Self {
-        let router_gemini = Router::new()
-            .route("/v1/v1beta/{*path}", post(api_post_gemini))
-            .route("/v1/vertex/v1beta/{*path}", post(api_post_gemini))
-            .layer(from_extractor::<RequireQueryKeyAuth>())
-            .layer(CompressionLayer::new())
-            .with_state(self.gemini_providers.clone());
-        let router_oai = Router::new()
-            .route("/gemini/chat/completions", post(api_post_gemini_oai))
-            .route("/gemini/vertex/chat/completions", post(api_post_gemini_oai))
-            .layer(from_extractor::<RequireBearerAuth>())
-            .layer(CompressionLayer::new())
-            .with_state(self.gemini_providers.clone());
-        let router = router_gemini.merge(router_oai);
-        self.inner = self.inner.merge(router);
         self
     }
 
@@ -132,28 +103,13 @@ impl RouterBuilder {
             .route("/cookies", get(api_get_cookies))
             .route("/cookie", delete(api_delete_cookie).post(api_post_cookie))
             .with_state(self.cookie_actor_handle.to_owned());
-        let key_router = Router::new()
-            .route("/key", post(api_post_key).delete(api_delete_key))
-            .route("/keys", get(api_get_keys))
-            .with_state(self.key_actor_handle.to_owned());
-        let vertex_router = Router::new()
-            .route("/vertex/credentials", get(api_get_vertex_credentials))
-            .route(
-                "/vertex/credential",
-                post(api_post_vertex_credential).delete(api_delete_vertex_credential),
-            );
         let admin_router = Router::new()
             .route("/auth", get(api_auth))
-            .route("/config", get(api_get_config).post(api_post_config))
-            .route("/storage/import", post(api_storage_import))
-            .route("/storage/export", post(api_storage_export))
-            .route("/storage/status", get(api_storage_status));
+            .route("/config", get(api_get_config).post(api_post_config));
         let router = Router::new()
             .nest(
                 "/api",
                 cookie_router
-                    .merge(key_router)
-                    .merge(vertex_router)
                     .merge(admin_router)
                     .layer(from_extractor::<RequireAdminAuth>()),
             )

@@ -1,5 +1,7 @@
 use std::collections::{HashSet, VecDeque};
 
+use chrono::Utc;
+use colored::Colorize;
 use moka::sync::Cache;
 use ractor::{Actor, ActorProcessingErr, ActorRef, RpcReplyPort};
 use serde::Serialize;
@@ -7,12 +9,13 @@ use snafu::{GenerateImplicitData, Location};
 use tracing::{error, info, warn};
 
 use crate::{
-    config::{CLEWDR_CONFIG, ClewdrConfig, CookieStatus, Reason, UselessCookie},
+    config::{CLEWDR_CONFIG, ClewdrConfig, CookieStatus, Reason, UsageBreakdown, UselessCookie},
     error::ClewdrError,
-    persistence::StorageLayer,
 };
 
 const INTERVAL: u64 = 300;
+const SESSION_WINDOW_SECS: i64 = 5 * 60 * 60; // 5h
+const WEEKLY_WINDOW_SECS: i64 = 7 * 24 * 60 * 60; // 7d
 
 #[derive(Debug, Serialize, Clone)]
 pub struct CookieStatusInfo {
@@ -48,9 +51,7 @@ struct CookieActorState {
 }
 
 /// Cookie actor that handles cookie distribution, collection, and status tracking using Ractor
-struct CookieActor {
-    storage: &'static dyn StorageLayer,
-}
+struct CookieActor;
 
 impl CookieActor {
     /// Saves the current state of cookies to the configuration
@@ -81,14 +82,14 @@ impl CookieActor {
     fn log(state: &CookieActorState) {
         info!(
             "Valid: {}, Exhausted: {}, Invalid: {}",
-            state.valid.len().to_string().as_str(),
-            state.exhausted.len().to_string().as_str(),
-            state.invalid.len().to_string().as_str(),
+            state.valid.len().to_string().green(),
+            state.exhausted.len().to_string().yellow(),
+            state.invalid.len().to_string().red(),
         );
     }
 
     /// Checks and resets cookies that have passed their reset time
-    fn reset(state: &mut CookieActorState, storage: &'static dyn StorageLayer) {
+    fn reset(state: &mut CookieActorState) {
         let mut reset_cookies = Vec::new();
         state.exhausted.retain(|cookie| {
             let reset_cookie = cookie.clone().reset();
@@ -105,13 +106,77 @@ impl CookieActor {
         // 将重置的 cookies 放回 valid，并进行增量 upsert
         for c in reset_cookies.into_iter() {
             state.valid.push_back(c.clone());
-            if storage.is_enabled() {
-                tokio::spawn(async move {
-                    let _ = storage.persist_cookie_upsert(&c).await;
-                });
-            }
         }
         Self::log(state);
+    }
+
+    /// Reset in-memory usage buckets when local reset boundaries have elapsed.
+    /// This avoids stale counters when cooldown windows expire between requests.
+    fn refresh_usage_windows(state: &mut CookieActorState) -> bool {
+        fn reset_if_due(
+            has_reset: Option<bool>,
+            resets_at: &mut Option<i64>,
+            usage: &mut UsageBreakdown,
+            window_secs: i64,
+            now: i64,
+        ) -> bool {
+            if has_reset == Some(true) && resets_at.map(|ts| now >= ts).unwrap_or(false) {
+                *usage = UsageBreakdown::default();
+                *resets_at = Some(now + window_secs);
+                return true;
+            }
+            false
+        }
+
+        let now = Utc::now().timestamp();
+        let mut changed = false;
+
+        let apply_resets = |cookie: &mut CookieStatus| {
+            let mut cookie_changed = reset_if_due(
+                cookie.session_has_reset,
+                &mut cookie.session_resets_at,
+                &mut cookie.session_usage,
+                SESSION_WINDOW_SECS,
+                now,
+            );
+            cookie_changed |= reset_if_due(
+                cookie.weekly_has_reset,
+                &mut cookie.weekly_resets_at,
+                &mut cookie.weekly_usage,
+                WEEKLY_WINDOW_SECS,
+                now,
+            );
+            cookie_changed |= reset_if_due(
+                cookie.weekly_sonnet_has_reset,
+                &mut cookie.weekly_sonnet_resets_at,
+                &mut cookie.weekly_sonnet_usage,
+                WEEKLY_WINDOW_SECS,
+                now,
+            );
+            cookie_changed |= reset_if_due(
+                cookie.weekly_opus_has_reset,
+                &mut cookie.weekly_opus_resets_at,
+                &mut cookie.weekly_opus_usage,
+                WEEKLY_WINDOW_SECS,
+                now,
+            );
+            cookie_changed
+        };
+
+        for cookie in state.valid.iter_mut() {
+            changed |= apply_resets(cookie);
+        }
+
+        if !state.exhausted.is_empty() {
+            let mut new_exhausted = HashSet::with_capacity(state.exhausted.len());
+            for mut cookie in state.exhausted.drain() {
+                changed |= apply_resets(&mut cookie);
+                new_exhausted.insert(cookie);
+            }
+            state.exhausted = new_exhausted;
+        }
+
+        changed
     }
 
     /// Dispatches a cookie for use
@@ -120,7 +185,7 @@ impl CookieActor {
         state: &mut CookieActorState,
         hash: Option<u64>,
     ) -> Result<CookieStatus, ClewdrError> {
-        Self::reset(state, self.storage);
+        Self::reset(state);
         if let Some(hash) = hash
             && let Some(cookie) = state.moka.get(&hash)
             && let Some(cookie) = state.valid.iter().find(|&c| c == &cookie)
@@ -172,7 +237,7 @@ impl CookieActor {
                     return;
                 }
             }
-            Reason::NonPro => {
+            Reason::Free => {
                 find_remove(&cookie);
                 let mut removed = cookie.clone();
                 removed.reset_window_usage();
@@ -299,64 +364,33 @@ impl Actor for CookieActor {
     ) -> Result<(), ActorProcessingErr> {
         match message {
             CookieActorMessage::Return(cookie, reason) => {
-                let orig = cookie.clone();
-                let r = reason.clone();
                 Self::collect(state, cookie, reason);
-                let storage = self.storage;
-                if storage.is_enabled() {
-                    tokio::spawn(async move {
-                        match r {
-                            None => {
-                                let _ = storage.persist_cookie_upsert(&orig).await;
-                            }
-                            Some(Reason::TooManyRequest(ts)) | Some(Reason::Restricted(ts)) => {
-                                let mut c = orig.clone();
-                                c.reset_time = Some(ts);
-                                let _ = storage.persist_cookie_upsert(&c).await;
-                            }
-                            Some(reason) => {
-                                let u = UselessCookie::new(orig.cookie.clone(), reason);
-                                let _ = storage.persist_wasted_upsert(&u).await;
-                            }
-                        }
-                    });
-                }
             }
             CookieActorMessage::Submit(cookie) => {
-                let c = cookie.clone();
                 Self::accept(state, cookie);
-                let storage = self.storage;
-                if storage.is_enabled() {
-                    tokio::spawn(async move {
-                        if let Err(e) = storage.persist_cookie_upsert(&c).await {
-                            error!("Failed to upsert cookie: {}", e);
-                        }
-                    });
-                }
             }
             CookieActorMessage::CheckReset => {
-                Self::reset(state, self.storage);
+                let changed = Self::refresh_usage_windows(state);
+                if changed {
+                    Self::save(state);
+                }
+                Self::reset(state);
             }
             CookieActorMessage::Request(cache_hash, reply_port) => {
                 let result = self.dispatch(state, cache_hash);
                 reply_port.send(result)?;
             }
             CookieActorMessage::GetStatus(reply_port) => {
+                let changed = Self::refresh_usage_windows(state);
+                if changed {
+                    Self::save(state);
+                }
                 let status_info = Self::report(state);
                 reply_port.send(status_info)?;
             }
             CookieActorMessage::Delete(cookie, reply_port) => {
-                let storage = self.storage;
                 let result = Self::delete(state, cookie.clone());
-                let should_cleanup = result.is_ok() && storage.is_enabled();
                 reply_port.send(result)?;
-                if should_cleanup {
-                    tokio::spawn(async move {
-                        if let Err(e) = storage.delete_cookie_row(&cookie).await {
-                            error!("Failed to delete cookie row: {}", e);
-                        }
-                    });
-                }
             }
         }
         Ok(())
@@ -381,14 +415,7 @@ pub struct CookieActorHandle {
 impl CookieActorHandle {
     /// Create a new CookieActor and return a handle to it
     pub async fn start() -> Result<Self, ractor::SpawnErr> {
-        Self::start_with_storage(crate::persistence::storage()).await
-    }
-
-    /// Create a new CookieActor with injected storage layer
-    pub async fn start_with_storage(
-        storage: &'static dyn StorageLayer,
-    ) -> Result<Self, ractor::SpawnErr> {
-        let (actor_ref, _join_handle) = Actor::spawn(None, CookieActor { storage }, ()).await?;
+        let (actor_ref, _join_handle) = Actor::spawn(None, CookieActor, ()).await?;
 
         // Start the timeout checker
         let handle = Self {

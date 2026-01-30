@@ -1,5 +1,5 @@
-# v0.11.21
+# Release Notes
 
-## Bug Fixes
-
-- Fix double slash problem for Claude Web API endpoints
+- remove santizer
+- remove musllinux temporalily to be built
+- update to adapt cookie like sk-ant-sidxx-

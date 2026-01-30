@@ -54,20 +54,19 @@ impl ClaudeWebState {
         // upload images
         stream::iter(imgs)
             .filter_map(async |img| {
-                // check if the image is base64
-                if img.type_ != "base64" {
+                let ImageSource::Base64 { media_type, data } = img else {
                     warn!("Image type is not base64");
                     return None;
-                }
+                };
                 // decode the image
                 let bytes = BASE64_STANDARD
-                    .decode(img.data)
+                    .decode(data)
                     .inspect_err(|e| {
                         warn!("Failed to decode image: {}", e);
                     })
                     .ok()?;
                 // choose the file name based on the media type
-                let file_name = match img.media_type.to_lowercase().as_str() {
+                let file_name = match media_type.to_lowercase().as_str() {
                     "image/png" => "image.png",
                     "image/jpeg" => "image.jpg",
                     "image/jpg" => "image.jpg",
@@ -162,10 +161,24 @@ fn merge_messages(msgs: Vec<Message>, system: String) -> Option<Merged> {
                 let blocks = content
                     .into_iter()
                     .filter_map(|b| match b {
-                        ContentBlock::Text { text } => Some(text.trim().to_string()),
-                        ContentBlock::Image { source } => {
-                            // push image to the list
-                            imgs.push(source);
+                        ContentBlock::Text { text, .. } => Some(text.trim().to_string()),
+                        ContentBlock::Image { source, .. } => {
+                            match source {
+                                ImageSource::Base64 { .. } => {
+                                    // push image to the list
+                                    imgs.push(source);
+                                }
+                                ImageSource::Url { url } => {
+                                    if let Some(source) = extract_image_from_url(&url) {
+                                        imgs.push(source);
+                                    } else {
+                                        warn!("Unsupported image url source");
+                                    }
+                                }
+                                ImageSource::File { .. } => {
+                                    warn!("Image file sources are not supported");
+                                }
+                            }
                             None
                         }
                         ContentBlock::ImageUrl { image_url } => {
@@ -260,9 +273,11 @@ fn extract_image_from_url(url: &str) -> Option<ImageSource> {
     let (metadata, base64_data) = url.split_once(',')?;
 
     let (media_type, type_) = metadata.strip_prefix("data:")?.split_once(';')?;
+    if type_ != "base64" {
+        return None;
+    }
 
-    Some(ImageSource {
-        type_: type_.to_string(),
+    Some(ImageSource::Base64 {
         media_type: media_type.to_string(),
         data: base64_data.to_owned(),
     })
