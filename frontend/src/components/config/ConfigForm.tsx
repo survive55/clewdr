@@ -118,7 +118,7 @@ const ConfigForm: React.FC<ConfigFormProps> = ({ config, onChange }) => {
             label={t("config.sections.api.maxRetries")}
           />
         </div>
-        <div className="flex space-x-6">
+        <div className="grid grid-cols-2 gap-x-6 gap-y-3">
           <ConfigCheckbox
             name="preserve_chats"
             checked={config.preserve_chats}
@@ -138,6 +138,13 @@ const ConfigForm: React.FC<ConfigFormProps> = ({ config, onChange }) => {
             checked={!!config.enable_web_count_tokens}
             onChange={onChange}
             label={t("config.sections.api.webCountTokens")}
+          />
+
+          <ConfigCheckbox
+            name="sanitize_messages"
+            checked={config.sanitize_messages}
+            onChange={onChange}
+            label={t("config.sections.api.sanitizeMessages")}
           />
         </div>
       </ConfigSection>

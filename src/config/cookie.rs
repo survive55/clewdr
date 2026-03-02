@@ -3,8 +3,10 @@ use std::{
     hash::Hash,
     ops::Deref,
     str::FromStr,
+    sync::LazyLock,
 };
 
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use snafu::{GenerateImplicitData, Location};
 use tracing::info;
@@ -21,6 +23,13 @@ pub enum ModelFamily {
     Sonnet,
     Opus,
     Other,
+}
+
+/// Per-model 1M context probing channel
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Claude1mChannel {
+    Sonnet,
+    Opus,
 }
 
 /// Per-period usage breakdown by family
@@ -76,7 +85,9 @@ pub struct CookieStatus {
     #[serde(default)]
     pub reset_time: Option<i64>,
     #[serde(default)]
-    pub supports_claude_1m: Option<bool>,
+    pub supports_claude_1m_sonnet: Option<bool>,
+    #[serde(default)]
+    pub supports_claude_1m_opus: Option<bool>,
     #[serde(default)]
     pub count_tokens_allowed: Option<bool>,
 
@@ -159,7 +170,8 @@ impl CookieStatus {
             cookie,
             token: None,
             reset_time,
-            supports_claude_1m: None,
+            supports_claude_1m_sonnet: Some(true),
+            supports_claude_1m_opus: Some(true),
             count_tokens_allowed: None,
 
             session_usage: UsageBreakdown::default(),
@@ -205,8 +217,18 @@ impl CookieStatus {
         self.token = Some(token);
     }
 
-    pub fn set_claude_1m_support(&mut self, value: Option<bool>) {
-        self.supports_claude_1m = value;
+    pub fn claude_1m_support(&self, channel: Claude1mChannel) -> Option<bool> {
+        match channel {
+            Claude1mChannel::Sonnet => self.supports_claude_1m_sonnet,
+            Claude1mChannel::Opus => self.supports_claude_1m_opus,
+        }
+    }
+
+    pub fn set_claude_1m_support(&mut self, channel: Claude1mChannel, value: Option<bool>) {
+        match channel {
+            Claude1mChannel::Sonnet => self.supports_claude_1m_sonnet = value,
+            Claude1mChannel::Opus => self.supports_claude_1m_opus = value,
+        }
     }
 
     pub fn set_count_tokens_allowed(&mut self, value: Option<bool>) {
@@ -383,8 +405,8 @@ impl Default for ClewdrCookie {
 impl ClewdrCookie {
     pub fn ellipse(&self) -> String {
         let len = self.inner.len();
-        if len > 10 {
-            format!("{}...", &self.inner[..10])
+        if len > 20 {
+            format!("{}...", &self.inner[..20])
         } else {
             self.inner.to_owned()
         }
@@ -395,21 +417,32 @@ impl FromStr for ClewdrCookie {
     type Err = ClewdrError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let trimmed = s.trim();
-        let cleaned = trimmed
-            .strip_prefix("sessionKey=")
-            .unwrap_or(trimmed)
-            .trim()
-            .to_string();
+        static RE_FULL: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(r"sk-ant-sid\d{2}-[0-9A-Za-z_-]{86,120}-[0-9A-Za-z_-]{6}AA").unwrap()
+        });
+        static RE_BASE: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r"^[0-9A-Za-z_-]{86,120}-[0-9A-Za-z_-]{6}AA$").unwrap());
 
-        if cleaned.is_empty() {
-            return Err(ClewdrError::ParseCookieError {
-                loc: Location::generate(),
-                msg: "Invalid cookie format",
+        let cleaned = s
+            .trim()
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+            .collect::<String>();
+
+        if let Some(found) = RE_FULL.find(&cleaned) {
+            return Ok(Self {
+                inner: found.as_str().to_string(),
             });
         }
 
-        Ok(Self { inner: cleaned })
+        if RE_BASE.is_match(&cleaned) {
+            return Ok(Self { inner: cleaned });
+        }
+
+        Err(ClewdrError::ParseCookieError {
+            loc: Location::generate(),
+            msg: "Invalid cookie format",
+        })
     }
 }
 
@@ -429,18 +462,31 @@ impl Debug for ClewdrCookie {
 mod tests {
     use super::*;
 
+    fn make_base_cookie_with_len(prefix_len: usize) -> String {
+        format!("{}-{}AA", "a".repeat(prefix_len), "b".repeat(6))
+    }
+
     #[test]
     fn test_sk_cookie_from_str() {
-        let cookie = ClewdrCookie::from_str("sk-ant-sidXX----------------------------SET_YOUR_COOKIE_HERE----------------------------------------AAAAAAAA").unwrap();
-        assert!(cookie.inner.starts_with("sk-ant-sid"));
-        assert!(cookie.inner.ends_with("AA"));
-        assert!(cookie.inner.len() > 95);
+        let base = make_base_cookie_with_len(86);
+        let full = format!("sk-ant-sid01-{base}");
+        let cookie = ClewdrCookie::from_str(&full).unwrap();
+        assert_eq!(cookie.inner, full);
     }
 
     #[test]
     fn test_cookie_from_str() {
-        let cookie = ClewdrCookie::from_str("dif---------------------------SET_YOUR_COOKIE_HERE----------------------------------------AAAAAAAAdif").unwrap();
-        assert_eq!(cookie.inner.len(), 95);
+        let base = make_base_cookie_with_len(86);
+        let cookie = ClewdrCookie::from_str(&base).unwrap();
+        assert_eq!(cookie.inner, base);
+    }
+
+    #[test]
+    fn test_long_cookie_from_str() {
+        let base = make_base_cookie_with_len(109);
+        let full = format!("sk-ant-sid02-{base}");
+        let cookie = ClewdrCookie::from_str(&full).unwrap();
+        assert_eq!(cookie.inner, full);
     }
 
     #[test]
